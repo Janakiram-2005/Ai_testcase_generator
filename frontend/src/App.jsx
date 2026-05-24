@@ -211,8 +211,8 @@ export default function App() {
 
   // Premium Custom States
   const [theme, setTheme]                 = useState('dark')
-  const [availableModels, setAvailableModels] = useState([])
-  const [selectedModel, setSelectedModel] = useState('')
+  const [availableModels, setAvailableModels] = useState(['qwen2.5:0.5b', 'gemma2:latest', 'llama3'])
+  const [selectedModel, setSelectedModel] = useState('qwen2.5:0.5b')
   const [vulnerabilities, setVulnerabilities] = useState([])
   const [consequences, setConsequences]   = useState([])
   const [fullyCorrect, setFullyCorrect]   = useState(false)

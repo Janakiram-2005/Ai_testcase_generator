@@ -338,22 +338,6 @@ def parse_and_generate(
     """
     language = language.lower()
     
-    if fully_correct:
-        return (
-            "# ===========================================================================\n"
-            "# Verification Successful!\n"
-            "# The function is analyzed as fully correct with 100% security coverage.\n"
-            "# Dynamic vulnerability test generation and fuzzing are bypassed.\n"
-            "# ===========================================================================\n"
-            if language == "python"
-            else
-            "// ===========================================================================\n"
-            "// Verification Successful!\n"
-            "// The function is analyzed as fully correct with 100% security coverage.\n"
-            "// Dynamic vulnerability test generation and fuzzing are bypassed.\n"
-            "// ===========================================================================\n"
-        )
-
     parser = _get_parser(language)
     source_bytes = code.encode("utf-8")
     tree = parser.parse(source_bytes)
@@ -365,6 +349,22 @@ def parse_and_generate(
     else:
         functions = _collect_js_functions(root, source_bytes)
         test_code = _build_js_tests(functions, ai_edge_cases, profile)
+
+    # Prepend verification success header if fully correct
+    if fully_correct:
+        banner = (
+            "# ===========================================================================\n"
+            "# Verification Successful!\n"
+            "# The function is analyzed as fully correct with 100% security coverage.\n"
+            "# ===========================================================================\n\n"
+            if language == "python"
+            else
+            "// ===========================================================================\n"
+            "// Verification Successful!\n"
+            "// The function is analyzed as fully correct with 100% security coverage.\n"
+            "// ===========================================================================\n\n"
+        )
+        test_code = banner + test_code
 
     if not functions:
         header = (

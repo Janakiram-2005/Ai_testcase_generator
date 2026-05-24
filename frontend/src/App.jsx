@@ -217,7 +217,60 @@ export default function App() {
   const [consequences, setConsequences]   = useState([])
   const [fullyCorrect, setFullyCorrect]   = useState(false)
 
+  // GitHub & File Upload states
+  const [githubUrl, setGithubUrl] = useState('')
+  const [isFetchingGithub, setIsFetchingGithub] = useState(false)
+
   const { toast, show: showToast, dismiss: dismissToast } = useToast()
+
+  // File Upload handler
+  const handleFileUpload = useCallback((e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const text = event.target.result
+      setCode(text)
+      const ext = file.name.split('.').pop().toLowerCase()
+      if (ext === 'py') {
+        setLanguage('python')
+      } else if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
+        setLanguage('javascript')
+      }
+      showToast(`Uploaded and loaded: ${file.name}`, 'success')
+    }
+    reader.readAsText(file)
+  }, [showToast])
+
+  // GitHub fetch handler
+  const handleGithubFetch = useCallback(async () => {
+    if (!githubUrl.strip ? githubUrl.trim() : githubUrl.trim()) {
+      showToast('Please enter a GitHub URL first.', 'error')
+      return
+    }
+    setIsFetchingGithub(true)
+    try {
+      const res = await fetch(`/api/fetch_github?url=${encodeURIComponent(githubUrl)}`)
+      const data = await res.json()
+      if (!res.ok) {
+        showToast(data.error || 'Failed to fetch GitHub file', 'error')
+        return
+      }
+      setCode(data.content || '')
+      // Detect language from URL extension
+      const ext = githubUrl.split('.').pop().toLowerCase()
+      if (ext === 'py') {
+        setLanguage('python')
+      } else if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
+        setLanguage('javascript')
+      }
+      showToast('Successfully fetched file from GitHub!', 'success')
+    } catch (err) {
+      showToast('Network error fetching GitHub file.', 'error')
+    } finally {
+      setIsFetchingGithub(false)
+    }
+  }, [githubUrl, showToast])
 
   // Switch demo code when language changes
   const handleLanguageChange = useCallback((lang) => {
@@ -478,6 +531,44 @@ export default function App() {
               <option value="standard">🔵 Standard</option>
               <option value="security">🔴 Security</option>
             </StyledSelect>
+          </div>
+
+          {/* GitHub URL Scanner */}
+          <div className="flex items-center gap-1 bg-surface-700/60 border border-white/10 rounded-lg px-2 py-1.5 focus-within:border-brand-500/50 transition-colors">
+            <input
+              type="text"
+              placeholder="Paste GitHub file URL..."
+              value={githubUrl}
+              onChange={(e) => setGithubUrl(e.target.value)}
+              className="bg-transparent text-xs outline-none text-slate-200 w-28 md:w-36 font-mono"
+            />
+            <button
+              onClick={handleGithubFetch}
+              disabled={isFetchingGithub}
+              className="text-xs px-2 py-1 rounded bg-brand-600 hover:bg-brand-500 text-white font-bold transition-all disabled:opacity-50"
+              title="Scan public GitHub code file"
+            >
+              {isFetchingGithub ? "..." : "Scan URL"}
+            </button>
+          </div>
+
+          {/* Local File Upload button */}
+          <div className="flex items-center">
+            <input
+              type="file"
+              id="file-upload"
+              className="hidden"
+              accept=".py,.js,.jsx,.ts,.tsx,.json"
+              onChange={handleFileUpload}
+            />
+            <label
+              htmlFor="file-upload"
+              className="btn btn-secondary cursor-pointer py-1.5 px-2.5 text-xs flex items-center gap-1.5"
+              title="Upload and load a local source file"
+            >
+              <span>📂</span>
+              <span className="hidden sm:inline">Upload File</span>
+            </label>
           </div>
 
           {/* Security badge */}

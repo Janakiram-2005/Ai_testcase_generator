@@ -295,6 +295,30 @@ def get_models():
     return jsonify({"models": []})
 
 
+@app.route("/api/fetch_github", methods=["GET"])
+def fetch_github():
+    """Fetch raw code from standard public GitHub URL."""
+    github_url = request.args.get("url", "").strip()
+    if not github_url:
+        return jsonify({"error": "URL parameter is required."}), 400
+
+    # Translate normal GitHub blob link into the raw content address
+    # e.g., github.com/user/repo/blob/branch/file.py -> raw.githubusercontent.com/user/repo/branch/file.py
+    if "github.com" in github_url and "/blob/" in github_url:
+        raw_url = github_url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+    else:
+        raw_url = github_url
+
+    try:
+        resp = requests.get(raw_url, timeout=10)
+        resp.raise_for_status()
+        return jsonify({"content": resp.text, "url": raw_url})
+    except Exception as exc:
+        log.warning("Failed to fetch from GitHub URL: %s", exc)
+        return jsonify({"error": f"Failed to fetch file content: {exc}"}), 422
+
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     """Simple health-check endpoint."""

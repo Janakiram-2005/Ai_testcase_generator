@@ -11,43 +11,49 @@
 
 ---
 
-## 🛑 The Problem
+## 📖 Overview & High-Level Concept
 
-Manual test case generation is slow, tedious, and error-prone. For enterprise teams, using cloud LLMs (like OpenAI or Claude) is risky or outright prohibited due to intellectual property concerns. Most AI coding assistants can even hallucinate function names, causing brittle, unreliable tests and broken builds.
+When software teams write tests, they usually have to manually read a Jira ticket (requirements), look at their code, and write edge cases by hand. While cloud-based AI assistants can help automate this, enterprise companies frequently ban them because they do not want proprietary source code or sensitive business rules transmitted to third-party cloud servers. 
 
----
+The **Privacy-First AI Test Case Generator** solves this by running **100% locally and securely**. It is a specialized, local-first development companion designed to synthesize complete unit and fuzz testing suites without compromising intellectual property. The application reads plain-English product requirements using a local AI model and structurally maps those requirements directly onto deterministic function signatures extracted straight from the source code.
 
-## 💡 Our Solution
-
-A **privacy-first**, 100% local test generation engine:
-- **Zero Code Leaves Your Machine:** All logic runs locally. Only you see your code.
-- **Deterministic Analysis:** Uses mathematical AST parsing (via **Tree-sitter**) to guarantee total accuracy and robust function mapping—**no more hallucinated test suites!**
-- **Local AI:** Product requirements are analyzed using local models (run with Ollama) for robust, context-aware edge case extraction.
+At the core of the AI processing layer lies a robust local integration with **Ollama**. When requirements are supplied—whether they are simple bullet points, full Jira ticket descriptions, or plain-English specifications—the Flask backend sends structured instructions to local models, such as `gemma2`, `qwen2.5`, or `llama3`. Rather than risking timeouts or model-missing errors, the application features an intelligent, self-healing model discovery system. On startup, the backend automatically queries Ollama's active tags, dynamically fallback-targeting the first available local model if the default high-performance model has not yet been pulled, thereby ensuring bulletproof execution out-of-the-box.
 
 ---
 
-## ✨ Features
+## 🧬 Core Technical Architecture & Innovations
 
-- 🔒 **Air-Gapped Privacy:** Never transmits your code anywhere. Requirements, code parsing, and test synthesis run fully locally.
-- ⚡ **Universal Language Support:** Out-of-the-box support for **Python** (pytest) and **JavaScript/Node.js** (Jest) via Tree-sitter AST traversal.
-- 🧠 **Local LLM-Driven Edge Case Extraction:** Paste requirements or Jira tickets, and the LLM extracts behavioral edge cases for instant test mapping.
-- 🎯 **Intelligent Fuzzing Profiles:** Toggle between:
-  - `Standard QA` (injects null, 0, empty, typical edge cases)
-  - `Security` (injects SQLi, XSS, buffer overflow, massive strings)
-- 💻 **IDE-Like UI:** Embedded Monaco Editor delivers a premium, dark-mode coding experience in the browser.
-- 📥 **One-Click Exports:** Copy or download test suites as `.py` or `.js` files instantly.
-- 🚑 **Self-Healing Backend:** Auto-detects installed Ollama models and gracefully falls back to the best available for robust local inference.
-- 🏗️ **Production-Ready Deployment:** Easily deployable on Render or locally.
+### 🔍 Deterministic AST Parsing Engine (Tree-sitter)
+To complement the local AI, the system employs a mathematical **Tree-sitter AST engine** to inspect the structural layout of the source code. Rather than relying on fragile regular expressions or string splits, the backend traverses the formal AST nodes of the submitted code to programmatically target function declarations, parameter structures, arrow functions, and class methods in both Python and JavaScript. Using these formal signatures, the engine synthesizes mock argument lists guided by the chosen testing profile:
+*   **Standard QA Profile:** Injects typical safe bounds, `null`/`None`, `0`, `[]`, and `{}`, verifying basic boundary parameters.
+*   **Security Fuzzing Profile:** Generates hostile fuzzing matrices, targeting inputs with SQL injection (`' OR 1=1 --`), Cross-Site Scripting (XSS), massive strings, null byte injection, and buffer-overflow payloads to inspect safety thresholds.
+
+### 🌐 Direct GitHub & File Scanning (New!)
+To make codebase scanning effortless, the platform supports:
+*   **Direct GitHub Scanning:** Enter any standard public GitHub file URL. The system automatically fetches raw code content via a secure backend proxy, performs vulnerability scans, and maps requirements instantly.
+*   **Local File Uploads:** Upload and analyze local `.py`, `.js`, `.ts`, and `.tsx` source files directly through the browser.
+
+### 🧠 Smart NL Heuristic Wrapper & Bypasses
+The platform features an intelligent natural language wrapper. If a developer accidentally pastes a plain-text list of requirements into the code editor instead of the requirements pane, the server detects the plain-text pattern, moves the text to the correct processing channel, and runs the LLM parsing. When the AST parser reports that no formal functions were detected in the text, the compiler automatically synthesizes standalone, condition-based Jest or pytest modules (e.g., `class Test_StandaloneRequirements` or standalone `describe` blocks) matching the AI edge cases. Furthermore, if the code is analyzed as fully correct and safe, the generator does not block the outputs; it generates the full fuzz/edge-case tests while prepending a successful verification header confirming security coverage.
+
+### 📊 Threat Badge & Glowing Consequence Flowcharts (New!)
+Every generated test suite comes equipped with real-time AI security feedback. When vulnerabilities are detected, the system displays real-time security alerts along with a glowing, logical threat consequence flowchart (e.g., `Input Bypass ➔ Privilege Escalation ➔ Database Breach`), mapping out how vulnerabilities propagate through the execution stack.
+
+### 🎨 Premium UI with Dual Theme Mode (New!)
+Built as a unified production-ready monorepo, the frontend is built using **React, Vite, TailwindCSS, Lucide-React, and Monaco Editor** to deliver an IDE-like interface. It features:
+*   **Dual Light/Dark Theme Switcher:** A vibrant, responsive toggle between HSL tailored visual palettes.
+*   **Vibrant State Controllers & Interactive Toasts:** Glowing badges, visual flowcharts, and real-time toast alerts that keep the user fully aligned with local AI actions.
+*   **Integrated Deployment:** The Flask backend serves these compiled static assets directly on the root path, simplifying configuration. With a pre-configured `render.yaml` template, the entire stack can be compiled and deployed to platforms like Render.com.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture Flowchart
 
 ```mermaid
 graph TD
     A[Plain English Requirements] -->|HTTP POST| B(Local Ollama Model)
     B -->|Extracts JSON| C{Synthesis Engine}
-    D[Source Code] -->|Tree-sitter Parser| E(AST Extractor)
+    D[Source Code / GitHub / File Upload] -->|Tree-sitter Parser| E(AST Extractor)
     E -->|Function Signatures & Types| C
     C -->|Synthesized PyTest / Jest| F[Monaco UI Display]
 ```

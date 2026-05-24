@@ -1,18 +1,109 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Zap,
   Copy,
   Download,
-  ChevronDown,
   Shield,
   Code2,
   CheckCircle2,
   AlertCircle,
   Info,
+  Sun,
+  Moon,
+  LayoutGrid,
+  ShieldAlert,
 } from 'lucide-react'
 import CodeEditor from './components/CodeEditor.jsx'
 import RequirementsPanel from './components/RequirementsPanel.jsx'
 import ResultPanel from './components/ResultPanel.jsx'
+
+// ── Interactive Presets Menu definitions ─────────────────────────────────────
+const DEMO_PRESETS = [
+  {
+    name: "🔢 Discount (Python - Secure)",
+    code: `def calculate_discount(price, discount_pct):
+    """Apply a percentage discount securely."""
+    if price < 0:
+        raise ValueError("Price cannot be negative.")
+    if not (0 <= discount_pct <= 100):
+        raise ValueError("Discount must be between 0 and 100.")
+    return round(price * (1 - discount_pct / 100), 2)
+`,
+    requirements: "Accept positive float prices. Discount rate must be between 0% and 100%.",
+    language: "python",
+    profile: "standard",
+    description: "A fully correct, secure calculation function. Verification will successfully bypass extra test generation."
+  },
+  {
+    name: "💳 Process Payment (JS - Vulnerable)",
+    code: `function processPayment(cardToken, amount) {
+  // Vulnerable: no sanitization of cardToken, SQL-like query leakage, no bounds on amount
+  db.execute("SELECT * FROM cards WHERE token = '" + cardToken + "'");
+  if (amount == 0) {
+    return { success: false };
+  }
+  return { success: true, txnId: "TXN_" + Math.random() };
+}
+`,
+    requirements: "Analyze cardToken for SQL injection and check boundary bounds for zero/negative amounts.",
+    language: "javascript",
+    profile: "security",
+    description: "A highly vulnerable payment module. Triggers full vulnerability analysis, threat paths, and fuzzed test cases."
+  },
+  {
+    name: "📦 Data Pipeline (Python - Complex/Oversized)",
+    code: `import csv
+import json
+import logging
+from datetime import datetime
+
+class DataPipelineException(Exception):
+    pass
+
+class EnterpriseDataPipeline:
+    def __init__(self, config_json: str):
+        self.config = json.loads(config_json)
+        self.logger = logging.getLogger("Pipeline")
+
+    def validate_schema(self, row: dict) -> bool:
+        required = self.config.get("required_fields", [])
+        for field in required:
+            if field not in row or row[field] is None:
+                return False
+        return True
+
+    def process_record(self, record_raw: str) -> dict:
+        row = json.loads(record_raw)
+        if not self.validate_schema(row):
+            raise DataPipelineException("Schema validation failed.")
+        
+        # Transform data
+        row["processed_at"] = datetime.utcnow().isoformat()
+        row["status"] = "TRANSFORMED"
+        
+        # Sanitize Unicode tags
+        tags = row.get("tags", [])
+        sanitized = []
+        for tag in tags:
+            clean = str(tag).encode('ascii', 'ignore').decode('ascii').strip()
+            if clean:
+                sanitized.append(clean)
+        row["tags"] = sanitized
+        
+        # Simulate business calculations
+        value = float(row.get("amount", 0))
+        tax_rate = float(self.config.get("tax_rate", 0.05))
+        row["tax"] = round(value * tax_rate, 2)
+        row["total"] = round(value + row["tax"], 2)
+        
+        return row
+`,
+    requirements: "Validate nested CSV schemas, sanitise Unicode tags, and test calculations for tax bounds.",
+    language: "python",
+    profile: "standard",
+    description: "Oversized enterprise data pipeline (70+ lines) for testing AST traversal speed and dynamic model scaling."
+  }
+]
 
 // ── Default demo code snippets ──────────────────────────────────────────────
 const DEMO_CODE = {
@@ -27,28 +118,7 @@ const DEMO_CODE = {
     if not verify_hash(password, stored_hash):
         raise AuthenticationError("Invalid credentials.")
     return generate_session_token(username)
-
-
-def calculate_discount(price, discount_pct):
-    """Apply a percentage discount to a price."""
-    if price < 0:
-        raise ValueError("Price cannot be negative.")
-    if not (0 <= discount_pct <= 100):
-        raise ValueError("Discount must be between 0 and 100.")
-    return round(price * (1 - discount_pct / 100), 2)
-
-
-def parse_json_payload(raw_json):
-    """Parse and validate an API JSON payload."""
-    import json
-    data = json.loads(raw_json)
-    required_fields = ["user_id", "action", "timestamp"]
-    for field in required_fields:
-        if field not in data:
-            raise KeyError(f"Missing required field: {field}")
-    return data
 `,
-
   javascript: `function authenticateUser(username, password) {
   // Validate credentials and return a session token
   if (!username || !password) {
@@ -62,25 +132,6 @@ def parse_json_payload(raw_json):
     throw new AuthenticationError('Invalid credentials.');
   }
   return generateSessionToken(username);
-}
-
-const calculateDiscount = (price, discountPct) => {
-  if (price < 0) throw new RangeError('Price cannot be negative.');
-  if (discountPct < 0 || discountPct > 100) {
-    throw new RangeError('Discount must be between 0 and 100.');
-  }
-  return Math.round(price * (1 - discountPct / 100) * 100) / 100;
-};
-
-function parseJsonPayload(rawJson) {
-  const data = JSON.parse(rawJson);
-  const requiredFields = ['user_id', 'action', 'timestamp'];
-  for (const field of requiredFields) {
-    if (!(field in data)) {
-      throw new Error(\`Missing required field: \${field}\`);
-    }
-  }
-  return data;
 }
 `,
 }
@@ -158,6 +209,14 @@ export default function App() {
   const [edgeCases, setEdgeCases]         = useState([])
   const [ollamaAvailable, setOllamaAvailable] = useState(false)
 
+  // Premium Custom States
+  const [theme, setTheme]                 = useState('dark')
+  const [availableModels, setAvailableModels] = useState([])
+  const [selectedModel, setSelectedModel] = useState('')
+  const [vulnerabilities, setVulnerabilities] = useState([])
+  const [consequences, setConsequences]   = useState([])
+  const [fullyCorrect, setFullyCorrect]   = useState(false)
+
   const { toast, show: showToast, dismiss: dismissToast } = useToast()
 
   // Switch demo code when language changes
@@ -166,7 +225,53 @@ export default function App() {
     setCode(DEMO_CODE[lang])
     setGeneratedTests('')
     setEdgeCases([])
+    setVulnerabilities([])
+    setConsequences([])
+    setFullyCorrect(false)
   }, [])
+
+  // Fetch Ollama models list on mount
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const res = await fetch('/api/models')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.models && data.models.length > 0) {
+            setAvailableModels(data.models)
+            setSelectedModel(data.models[0])
+          }
+        }
+      } catch (err) {
+        console.error("Failed to query models:", err)
+      }
+    }
+    loadModels()
+  }, [])
+
+  // Dual Theme toggler
+  const toggleTheme = useCallback(() => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(nextTheme)
+    document.documentElement.classList.toggle('light', nextTheme === 'light')
+  }, [theme])
+
+  // Select demo preset
+  const handlePresetSelect = useCallback((presetName) => {
+    const preset = DEMO_PRESETS.find(p => p.name === presetName)
+    if (preset) {
+      setCode(preset.code)
+      setRequirements(preset.requirements)
+      setLanguage(preset.language)
+      setProfile(preset.profile)
+      setGeneratedTests('')
+      setEdgeCases([])
+      setVulnerabilities([])
+      setConsequences([])
+      setFullyCorrect(false)
+      showToast(`Loaded Preset: ${preset.name}`, 'info')
+    }
+  }, [showToast])
 
   // ── Generate handler ────────────────────────────────────────────────────────
   const handleGenerate = useCallback(async () => {
@@ -177,12 +282,21 @@ export default function App() {
     setIsLoading(true)
     setGeneratedTests('')
     setEdgeCases([])
+    setVulnerabilities([])
+    setConsequences([])
+    setFullyCorrect(false)
 
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, language, requirements, profile }),
+        body: JSON.stringify({
+          code,
+          language,
+          requirements,
+          profile,
+          model: selectedModel
+        }),
       })
 
       const data = await res.json()
@@ -195,22 +309,20 @@ export default function App() {
       setGeneratedTests(data.tests || '')
       setEdgeCases(data.edge_cases || [])
       setOllamaAvailable(data.ollama_available ?? false)
+      setFullyCorrect(data.fully_correct ?? false)
+      setVulnerabilities(data.vulnerabilities || [])
+      setConsequences(data.consequences || [])
 
       const fnCount = data.functions_found || 0
       const aiCount = (data.edge_cases || []).length
 
-      if (data.ollama_available ?? false) {
-        if (aiCount > 0) {
-          showToast(
-            `✓ ${fnCount} test function${fnCount !== 1 ? 's' : ''} generated with ${aiCount} AI edge cases.`,
-            'success',
-          )
-        } else {
-          showToast(
-            `✓ ${fnCount} test function${fnCount !== 1 ? 's' : ''} generated successfully.`,
-            'success',
-          )
-        }
+      if (data.fully_correct) {
+        showToast('✓ Success: Code is fully correct! Vulnerability and test generation bypassed.', 'success')
+      } else if (data.ollama_available) {
+        showToast(
+          `✓ ${fnCount} test function${fnCount !== 1 ? 's' : ''} generated with ${aiCount} AI edge cases.`,
+          'success',
+        )
       } else {
         showToast(
           `✓ ${fnCount} test function${fnCount !== 1 ? 's' : ''} generated (Ollama offline — AST only).`,
@@ -223,7 +335,7 @@ export default function App() {
     } finally {
       setIsLoading(false)
     }
-  }, [code, language, requirements, profile, showToast])
+  }, [code, language, requirements, profile, selectedModel, showToast])
 
   // ── Copy handler ─────────────────────────────────────────────────────────────
   const handleCopy = useCallback(async () => {
@@ -263,7 +375,7 @@ export default function App() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen bg-mesh" style={{ background: '#0d0f1a' }}>
+    <div className="flex flex-col h-screen bg-mesh" style={{ background: theme === 'dark' ? '#0d0f1a' : '#f8fafc', color: theme === 'dark' ? '#e2e8f0' : '#0f172a' }}>
 
       {/* ── Ambient background orbs ── */}
       <div
@@ -292,7 +404,7 @@ export default function App() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header
         className="relative z-10 flex items-center justify-between px-6 py-3 border-b border-white/5 flex-shrink-0"
-        style={{ background: 'rgba(13,15,26,0.85)', backdropFilter: 'blur(12px)' }}
+        style={{ background: theme === 'dark' ? 'rgba(13,15,26,0.85)' : 'rgba(255,255,255,0.9)', backdropFilter: 'blur(12px)' }}
       >
         {/* Brand */}
         <div className="flex items-center gap-3">
@@ -303,17 +415,49 @@ export default function App() {
             <h1 className="text-sm font-bold leading-none gradient-text">
               AI Test Case Generator
             </h1>
-            <p className="text-xs text-slate-600 mt-0.5">Privacy-First · Local AI · AST-Powered</p>
+            <p className="text-xs text-slate-500 mt-0.5">Privacy-First · Local AI · AST-Powered</p>
           </div>
         </div>
 
-        {/* Controls */}
-        <div className="flex items-center gap-3">
-          {/* Language */}
-          <div className="flex items-center gap-2">
-            <label htmlFor="lang-select" className="text-xs text-slate-500 font-medium hidden sm:block">
-              Language
+        {/* Dynamic Controls / Menus */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Preset Demos Selector */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="preset-select" className="text-xs text-slate-500 font-semibold hidden md:block">
+              Presets
             </label>
+            <StyledSelect
+              id="preset-select"
+              value=""
+              onChange={handlePresetSelect}
+            >
+              <option value="" disabled>🚀 Select Demo Preset...</option>
+              {DEMO_PRESETS.map((p, idx) => (
+                <option key={idx} value={p.name}>{p.name}</option>
+              ))}
+            </StyledSelect>
+          </div>
+
+          {/* Model Selector */}
+          {availableModels.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <label htmlFor="model-select" className="text-xs text-slate-500 font-semibold hidden md:block">
+                Model
+              </label>
+              <StyledSelect
+                id="model-select"
+                value={selectedModel}
+                onChange={setSelectedModel}
+              >
+                {availableModels.map((m, idx) => (
+                  <option key={idx} value={m}>🤖 {m}</option>
+                ))}
+              </StyledSelect>
+            </div>
+          )}
+
+          {/* Language Selector */}
+          <div className="flex items-center gap-2">
             <StyledSelect
               id="lang-select"
               value={language}
@@ -326,9 +470,6 @@ export default function App() {
 
           {/* Profile */}
           <div className="flex items-center gap-2">
-            <label htmlFor="profile-select" className="text-xs text-slate-500 font-medium hidden sm:block">
-              Profile
-            </label>
             <StyledSelect
               id="profile-select"
               value={profile}
@@ -341,11 +482,20 @@ export default function App() {
 
           {/* Security badge */}
           {profile === 'security' && (
-            <span className="badge badge-orange hidden md:inline-flex">
+            <span className="badge badge-orange hidden lg:inline-flex">
               <Shield size={10} />
               Security Fuzzing
             </span>
           )}
+
+          {/* Dual Theme Switcher Button */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg bg-surface-700/60 border border-white/10 hover:border-brand-500/50 text-slate-300 transition-colors"
+            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
         </div>
       </header>
 
@@ -390,6 +540,9 @@ export default function App() {
             edgeCases={edgeCases}
             ollamaAvailable={ollamaAvailable}
             isLoading={isLoading}
+            vulnerabilities={vulnerabilities}
+            consequences={consequences}
+            fullyCorrect={fullyCorrect}
           />
         </div>
       </main>
@@ -397,11 +550,11 @@ export default function App() {
       {/* ── Action bar (footer) ─────────────────────────────────────────────── */}
       <footer
         className="relative z-10 flex items-center justify-between px-6 py-3 border-t border-white/5 flex-shrink-0 gap-3"
-        style={{ background: 'rgba(13,15,26,0.85)', backdropFilter: 'blur(12px)' }}
+        style={{ background: theme === 'dark' ? 'rgba(13,15,26,0.85)' : 'rgba(255,255,255,0.9)', backdropFilter: 'blur(12px)' }}
       >
         {/* Left: info */}
-        <p className="text-xs text-slate-600 hidden sm:block">
-          Your code is processed <strong className="text-slate-500">locally</strong> — nothing leaves your machine.
+        <p className="text-xs text-slate-500 hidden sm:block">
+          Your code is processed <strong className="text-slate-400">locally</strong> — nothing leaves your machine.
         </p>
 
         {/* Right: action buttons */}
@@ -438,7 +591,7 @@ export default function App() {
             {isLoading ? (
               <>
                 <div className="spinner" />
-                Generating…
+                Analyzing & Generating…
               </>
             ) : (
               <>

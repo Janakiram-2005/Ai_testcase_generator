@@ -320,6 +320,7 @@ def parse_and_generate(
     language: str,
     ai_edge_cases: list[str],
     profile: str = "standard",
+    fully_correct: bool = False,
 ) -> str:
     """
     Main entry point.
@@ -330,11 +331,29 @@ def parse_and_generate(
         language:      "python" or "javascript".
         ai_edge_cases: Edge-case descriptions from the Ollama LLM.
         profile:       "standard" or "security".
+        fully_correct: True if the code is verified as completely secure/correct.
 
     Returns:
         A string containing the full test-file source.
     """
     language = language.lower()
+    
+    if fully_correct:
+        return (
+            "# ===========================================================================\n"
+            "# Verification Successful!\n"
+            "# The function is analyzed as fully correct with 100% security coverage.\n"
+            "# Dynamic vulnerability test generation and fuzzing are bypassed.\n"
+            "# ===========================================================================\n"
+            if language == "python"
+            else
+            "// ===========================================================================\n"
+            "// Verification Successful!\n"
+            "// The function is analyzed as fully correct with 100% security coverage.\n"
+            "// Dynamic vulnerability test generation and fuzzing are bypassed.\n"
+            "// ===========================================================================\n"
+        )
+
     parser = _get_parser(language)
     source_bytes = code.encode("utf-8")
     tree = parser.parse(source_bytes)

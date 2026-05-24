@@ -42,12 +42,13 @@ OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "60"))
 # Ollama integration
 # ---------------------------------------------------------------------------
 
-def get_active_model() -> str:
+def get_active_model(preferred_model: str = None) -> str:
     """
-    Returns the configured OLLAMA_MODEL if it is pulled,
+    Returns the configured OLLAMA_MODEL (or preferred_model if specified) if it is pulled,
     otherwise falls back to the first available pulled model.
-    If Ollama is unreachable or no models are pulled, returns OLLAMA_MODEL.
+    If Ollama is unreachable or no models are pulled, returns the fallback base.
     """
+    base_model = preferred_model or OLLAMA_MODEL
     try:
         url = OLLAMA_URL.replace("/api/generate", "/api/tags")
         resp = requests.get(url, timeout=3)
@@ -56,16 +57,16 @@ def get_active_model() -> str:
             pulled_names = [m.get("name") for m in models_data if m.get("name")]
             # Check for exact match or name-only match (e.g. "gemma2" vs "gemma2:latest")
             for name in pulled_names:
-                if name == OLLAMA_MODEL or name.split(":")[0] == OLLAMA_MODEL:
+                if name == base_model or name.split(":")[0] == base_model:
                     return name
             # If not found, fall back to the first available model
             if pulled_names:
                 fallback = pulled_names[0]
-                log.info("Configured model %s not found. Falling back to %s.", OLLAMA_MODEL, fallback)
+                log.info("Configured model %s not found. Falling back to %s.", base_model, fallback)
                 return fallback
     except Exception as exc:
-        log.warning("Could not query pulled models: %s. Using default %s.", exc, OLLAMA_MODEL)
-    return OLLAMA_MODEL
+        log.warning("Could not query pulled models: %s. Using default %s.", exc, base_model)
+    return base_model
 
 
 def _build_ollama_prompt(requirements: str, language: str, profile: str) -> str:
@@ -83,7 +84,7 @@ def _build_ollama_prompt(requirements: str, language: str, profile: str) -> str:
     )
 
 
-def parse_requirements(requirements: str, language: str, profile: str) -> list[str]:
+def parse_requirements(requirements: str, language: str, profile: str, preferred_model: str = None) -> list[str]:
     """
     Ask the local Ollama model for AI-generated edge cases.
     Returns an empty list (graceful degradation) if Ollama is unavailable or fails.
@@ -94,7 +95,7 @@ def parse_requirements(requirements: str, language: str, profile: str) -> list[s
 
     prompt = _build_ollama_prompt(requirements, language, profile)
     payload = {
-        "model": get_active_model(),
+        "model": get_active_model(preferred_model),
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0.4},
@@ -146,6 +147,61 @@ def parse_requirements(requirements: str, language: str, profile: str) -> list[s
         return []
 
 
+def analyze_vulnerabilities(code: str, requirements: str, language: str, preferred_model: str = None) -> dict:
+    """
+    Analyze the code using Ollama to identify vulnerabilities, correctness, and consequences.
+    """
+    fallback = {"fully_correct": False, "vulnerabilities": [], "consequences": []}
+    if not code.strip():
+        return fallback
+
+    model = get_active_model(preferred_model)
+    prompt = (
+        f"Analyze the following code for vulnerabilities under the context of these requirements:\n\n"
+        f"Requirements:\n{requirements}\n\n"
+        f"Code under test:\n{code}\n\n"
+        f"Return ONLY a valid JSON object with the following fields:\n"
+        f"1. 'fully_correct': boolean (true if the code has absolutely zero security bugs, edge-case flaws, or vulnerability errors; false otherwise).\n"
+        f"2. 'vulnerabilities': array of strings (the list of specific vulnerabilities or bugs found).\n"
+        f"3. 'consequences': array of strings (2-3 concise lines describing the logical consequences/error propagation flowchart, e.g. ['Input Bypass ➔ Privilege Escalation ➔ Database Breach', 'No Null Check ➔ Segment Fault ➔ Service Crash']).\n"
+        f"Do NOT include any code fences, markdown, or text outside the JSON object."
+    )
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.2},
+    }
+
+    try:
+        resp = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json().get("response", "").strip()
+
+        # clean code fences
+        if raw.startswith("```"):
+            raw = "\n".join(raw.splitlines()[1:])
+        if raw.endswith("```"):
+            raw = raw[: raw.rfind("```")]
+        raw = raw.strip()
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1:
+            return fallback
+
+        analysis = json.loads(raw[start : end + 1])
+        return {
+            "fully_correct": bool(analysis.get("fully_correct", False)),
+            "vulnerabilities": list(analysis.get("vulnerabilities", [])),
+            "consequences": list(analysis.get("consequences", [])),
+        }
+    except Exception as exc:
+        log.warning("Vulnerability analysis failed: %s", exc)
+        return fallback
+
+
 # ---------------------------------------------------------------------------
 # API Routes
 # ---------------------------------------------------------------------------
@@ -182,22 +238,28 @@ def generate():
     if profile not in ("standard", "security"):
         return jsonify({"error": "profile must be 'standard' or 'security'."}), 400
 
+    selected_model: str = data.get("model", "").strip()
+
     log.info(
-        "Generate request — language=%s profile=%s code_len=%d req_len=%d",
-        language, profile, len(code), len(requirements),
+        "Generate request — language=%s profile=%s model=%s code_len=%d req_len=%d",
+        language, profile, selected_model, len(code), len(requirements),
     )
 
     # Step 1: AI edge cases (non-blocking failure)
-    ai_edge_cases = parse_requirements(requirements, language, profile)
+    ai_edge_cases = parse_requirements(requirements, language, profile, preferred_model=selected_model)
     ollama_available = len(ai_edge_cases) > 0 or not requirements.strip()
 
-    # Step 2: AST-based test synthesis
+    # Step 2: Vulnerability Analysis
+    analysis = analyze_vulnerabilities(code, requirements, language, preferred_model=selected_model)
+
+    # Step 3: AST-based test synthesis
     try:
         generated_tests = parse_and_generate(
             code=code,
             language=language,
             ai_edge_cases=ai_edge_cases,
             profile=profile,
+            fully_correct=analysis.get("fully_correct", False),
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 422
@@ -210,10 +272,27 @@ def generate():
             "tests": generated_tests,
             "edge_cases": ai_edge_cases,
             "ollama_available": ollama_available,
-            "functions_found": generated_tests.count("def test_")
-            + generated_tests.count("test("),
+            "functions_found": generated_tests.count("def test_") + generated_tests.count("test("),
+            "fully_correct": analysis.get("fully_correct", False),
+            "vulnerabilities": analysis.get("vulnerabilities", []),
+            "consequences": analysis.get("consequences", []),
         }
     )
+
+
+@app.route("/api/models", methods=["GET"])
+def get_models():
+    """Fetch available models in Ollama."""
+    try:
+        url = OLLAMA_URL.replace("/api/generate", "/api/tags")
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            models_data = resp.json().get("models", [])
+            names = [m.get("name") for m in models_data if m.get("name")]
+            return jsonify({"models": names})
+    except Exception as exc:
+        log.warning("Failed to fetch Ollama models: %s", exc)
+    return jsonify({"models": []})
 
 
 @app.route("/api/health", methods=["GET"])
